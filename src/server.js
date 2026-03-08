@@ -18,7 +18,11 @@ const port = Number(process.env.PORT || 3001);
 const authToken = (process.env.AUTH_TOKEN || '').trim();
 const sessionPath = (process.env.WHATSAPP_SESSION_PATH || '.baileys_auth').trim();
 const confirmationStorePath = (process.env.CONFIRMATION_STORE_PATH || '.confirmation_store.json').trim();
-const reminderHoursBefore = Number(process.env.CONFIRMATION_REMINDER_HOURS || 24);
+const reminderMinutesBeforeEnv = Number(process.env.CONFIRMATION_REMINDER_MINUTES || 0);
+const reminderHoursBeforeEnv = Number(process.env.CONFIRMATION_REMINDER_HOURS || 24);
+const reminderMinutesBefore = reminderMinutesBeforeEnv > 0
+  ? reminderMinutesBeforeEnv
+  : Math.max(1, reminderHoursBeforeEnv * 60);
 const reminderScanIntervalMs = Math.max(5000, Number(process.env.CONFIRMATION_SCAN_INTERVAL_MS || 30000));
 const staleCleanupHours = Math.max(24, Number(process.env.CONFIRMATION_CLEANUP_HOURS || 72));
 const defaultCancelUrlTemplate = (process.env.CONFIRMATION_CANCEL_URL_TEMPLATE || '').trim();
@@ -367,7 +371,7 @@ async function dispatchDueReminders() {
       continue;
     }
 
-    const sendAtTs = startTs - (reminderHoursBefore * 60 * 60 * 1000);
+    const sendAtTs = startTs - (reminderMinutesBefore * 60 * 1000);
     if (nowTs < sendAtTs) {
       continue;
     }

@@ -60,14 +60,16 @@ Se `AUTH_TOKEN` estiver configurado, enviar header:
 Authorization: Bearer <AUTH_TOKEN>
 ```
 
-## Confirmação automática (24h antes)
+## Confirmação automática (30 minutos antes)
 
 O endpoint `POST /companies/:companyId/schedule-confirmation` agenda o lembrete de presença do cliente.
 
-Quando faltar o número de horas definido em `CONFIRMATION_REMINDER_HOURS` (padrão: `24`), o microserviço envia:
+Quando faltar o número de minutos definido em `CONFIRMATION_REMINDER_MINUTES` (padrão: `30`), o microserviço envia:
 
 - `1 - Vou comparecer`
 - `2 - Não vou comparecer (cancelar agendamento)`
+
+Compatibilidade: se `CONFIRMATION_REMINDER_MINUTES` não estiver definido, o serviço usa `CONFIRMATION_REMINDER_HOURS`.
 
 Se o cliente responder `2`, o microserviço tenta cancelar automaticamente via HTTP usando:
 
