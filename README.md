@@ -69,8 +69,6 @@ Quando faltar o número de minutos definido em `CONFIRMATION_REMINDER_MINUTES` (
 - `1 - Vou comparecer`
 - `2 - Não vou comparecer (cancelar agendamento)`
 
-Compatibilidade: se `CONFIRMATION_REMINDER_MINUTES` não estiver definido, o serviço usa `CONFIRMATION_REMINDER_HOURS`.
-
 Se o cliente responder `2`, o microserviço tenta cancelar automaticamente via HTTP usando:
 
 - `cancelUrl` do agendamento (se informado), ou
@@ -88,7 +86,9 @@ Se o cliente responder `2`, o microserviço tenta cancelar automaticamente via H
 }
 ```
 
-Campos obrigatórios: `appointmentId`, `number`, `startAt`.
+Campos obrigatórios: `appointmentId`, `number` e `startAt`.
+
+Alternativa de payload: em vez de `startAt`, você pode enviar `date` (`YYYY-MM-DD`) e `time` (`HH:mm` ou `HH:mm:ss`).
 
 ## Integrar com backend-agenda-pro
 

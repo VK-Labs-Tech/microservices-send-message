@@ -18,11 +18,10 @@ const port = Number(process.env.PORT || 3001);
 const authToken = (process.env.AUTH_TOKEN || '').trim();
 const sessionPath = (process.env.WHATSAPP_SESSION_PATH || '.baileys_auth').trim();
 const confirmationStorePath = (process.env.CONFIRMATION_STORE_PATH || '.confirmation_store.json').trim();
-const reminderMinutesBeforeEnv = Number(process.env.CONFIRMATION_REMINDER_MINUTES || 0);
-const reminderHoursBeforeEnv = Number(process.env.CONFIRMATION_REMINDER_HOURS || 24);
-const reminderMinutesBefore = reminderMinutesBeforeEnv > 0
-  ? reminderMinutesBeforeEnv
-  : Math.max(1, reminderHoursBeforeEnv * 60);
+const reminderMinutesBeforeEnv = Number(process.env.CONFIRMATION_REMINDER_MINUTES || 30);
+const reminderMinutesBefore = Number.isFinite(reminderMinutesBeforeEnv) && reminderMinutesBeforeEnv > 0
+  ? Math.floor(reminderMinutesBeforeEnv)
+  : 30;
 const reminderScanIntervalMs = Math.max(5000, Number(process.env.CONFIRMATION_SCAN_INTERVAL_MS || 30000));
 const staleCleanupHours = Math.max(24, Number(process.env.CONFIRMATION_CLEANUP_HOURS || 72));
 const defaultCancelUrlTemplate = (process.env.CONFIRMATION_CANCEL_URL_TEMPLATE || '').trim();
@@ -107,6 +106,28 @@ function toIsoDate(dateInput) {
     return '';
   }
   return parsed.toISOString();
+}
+
+function resolveStartAtInput(payload) {
+  const startAtRaw = String(payload?.startAt || payload?.start_at || '').trim();
+  if (startAtRaw) {
+    return startAtRaw;
+  }
+
+  const dateRaw = String(payload?.date || payload?.startDate || payload?.start_date || '').trim();
+  const timeRaw = String(payload?.time || payload?.startTime || payload?.start_time || '').trim();
+
+  if (!dateRaw || !timeRaw) {
+    return '';
+  }
+
+  // Accept "HH:mm" and "HH:mm:ss" and build a full datetime from sent date + time.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateRaw) || !/^\d{2}:\d{2}(:\d{2})?$/.test(timeRaw)) {
+    return '';
+  }
+
+  const normalizedTime = timeRaw.length === 5 ? `${timeRaw}:00` : timeRaw;
+  return `${dateRaw}T${normalizedTime}`;
 }
 
 function formatDateTimeForMessage(dateInput) {
@@ -373,6 +394,10 @@ async function dispatchDueReminders() {
 
     const sendAtTs = startTs - (reminderMinutesBefore * 60 * 1000);
     if (nowTs < sendAtTs) {
+      continue;
+    }
+
+    if (nowTs >= startTs) {
       continue;
     }
 
@@ -806,13 +831,13 @@ app.post('/companies/:companyId/schedule-confirmation', checkAuth, async (req, r
 
     const appointmentId = String(req.body?.appointmentId || req.body?.appointment_id || '').trim();
     const number = normalizePhone(req.body?.number || req.body?.phone || '');
-    const startAt = toIsoDate(req.body?.startAt || req.body?.start_at || '');
+    const startAt = toIsoDate(resolveStartAtInput(req.body || {}));
     const clientName = String(req.body?.clientName || req.body?.client_name || '').trim();
 
     if (!appointmentId || !number || !startAt) {
       return res.status(422).json({
         ok: false,
-        message: 'Campos obrigatórios: appointmentId, number e startAt',
+        message: 'Campos obrigatórios: appointmentId, number e startAt (ou date + time)',
       });
     }
 
