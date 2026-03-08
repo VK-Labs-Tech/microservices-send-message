@@ -30,6 +30,7 @@ const defaultCancelToken = (process.env.CONFIRMATION_CANCEL_TOKEN || '').trim();
 const defaultCancelTokenHeader = (process.env.CONFIRMATION_CANCEL_TOKEN_HEADER || 'Authorization').trim();
 const defaultCancelTokenPrefix = (process.env.CONFIRMATION_CANCEL_TOKEN_PREFIX || 'Bearer').trim();
 const cancelRequestTimeoutMs = Math.max(1000, Number(process.env.CONFIRMATION_CANCEL_TIMEOUT_MS || 10000));
+const maintenanceDaysAfter = Math.max(1, Number(process.env.MAINTENANCE_FOLLOWUP_DAYS || 15));
 const corsAllowedOriginsRaw = (process.env.CORS_ALLOWED_ORIGINS || '*').trim();
 const corsAllowedOrigins = corsAllowedOriginsRaw === '*'
   ? ['*']
@@ -167,6 +168,17 @@ function buildReminderMessage(entry) {
   ].join('\n');
 }
 
+function buildMaintenanceMessage(entry) {
+  const clientName = String(entry.clientName || '').trim();
+
+  return [
+    `Olá ${clientName || 'cliente'}!`,
+    'Já se passaram alguns dias desde o seu atendimento.',
+    'Está na hora de fazer a manutenção do serviço.',
+    'Se quiser, responda esta mensagem para agendarmos seu retorno.',
+  ].join('\n');
+}
+
 function persistConfirmations() {
   const storePath = ensureDirForFile(confirmationStorePath);
   writeJsonFile(storePath, Array.from(confirmationEntries.values()));
@@ -206,6 +218,9 @@ function loadConfirmations() {
       cancelHeaders: rawEntry?.cancelHeaders && typeof rawEntry.cancelHeaders === 'object' ? rawEntry.cancelHeaders : {},
       cancelBody: rawEntry?.cancelBody ?? null,
       cancelResult: rawEntry?.cancelResult && typeof rawEntry.cancelResult === 'object' ? rawEntry.cancelResult : null,
+      maintenanceAt: rawEntry?.maintenanceAt ? toIsoDate(rawEntry.maintenanceAt) : null,
+      maintenanceStatus: String(rawEntry?.maintenanceStatus || 'pending').trim() || 'pending',
+      maintenanceSentAt: rawEntry?.maintenanceSentAt ? toIsoDate(rawEntry.maintenanceSentAt) : null,
       createdAt: rawEntry?.createdAt ? toIsoDate(rawEntry.createdAt) : new Date().toISOString(),
       updatedAt: rawEntry?.updatedAt ? toIsoDate(rawEntry.updatedAt) : new Date().toISOString(),
     });
@@ -365,6 +380,7 @@ async function handleIncomingMessage(companyId, message) {
 
   if (cancelResult.ok) {
     entry.status = 'cancelled';
+    entry.maintenanceStatus = 'skipped_cancelled';
     upsertConfirmation(entry);
     await sendTextByCompany(companyId, number, 'Seu agendamento foi cancelado com sucesso.');
     return;
@@ -414,17 +430,48 @@ async function dispatchDueReminders() {
     upsertConfirmation(entry);
   }
 
+  for (const entry of confirmationEntries.values()) {
+    if (entry.maintenanceStatus !== 'pending') {
+      continue;
+    }
+
+    const maintenanceTs = new Date(entry.maintenanceAt).getTime();
+    if (Number.isNaN(maintenanceTs)) {
+      continue;
+    }
+
+    if (nowTs < maintenanceTs) {
+      continue;
+    }
+
+    const message = buildMaintenanceMessage(entry);
+    const sendResult = await sendTextByCompany(entry.companyId, entry.number, message);
+    if (sendResult.status === 200) {
+      entry.maintenanceStatus = 'sent';
+      entry.maintenanceSentAt = new Date().toISOString();
+      upsertConfirmation(entry);
+      continue;
+    }
+
+    entry.maintenanceStatus = 'pending';
+    upsertConfirmation(entry);
+  }
+
   const maxAgeMs = staleCleanupHours * 60 * 60 * 1000;
   let removed = 0;
   for (const [key, entry] of confirmationEntries.entries()) {
     const startTs = new Date(entry.startAt).getTime();
+    const maintenanceTs = new Date(entry.maintenanceAt).getTime();
     if (Number.isNaN(startTs)) {
       confirmationEntries.delete(key);
       removed += 1;
       continue;
     }
 
-    if (nowTs - startTs > maxAgeMs) {
+    const hasValidMaintenanceAt = !Number.isNaN(maintenanceTs);
+    const cleanupBaseTs = hasValidMaintenanceAt ? Math.max(startTs, maintenanceTs) : startTs;
+
+    if (nowTs - cleanupBaseTs > maxAgeMs) {
       confirmationEntries.delete(key);
       removed += 1;
     }
@@ -842,6 +889,9 @@ app.post('/companies/:companyId/schedule-confirmation', checkAuth, async (req, r
     }
 
     const key = buildConfirmationKey(companyId, appointmentId);
+    const maintenanceAtDate = new Date(startAt);
+    maintenanceAtDate.setDate(maintenanceAtDate.getDate() + maintenanceDaysAfter);
+
     const entry = {
       key,
       companyId,
@@ -858,6 +908,9 @@ app.post('/companies/:companyId/schedule-confirmation', checkAuth, async (req, r
       cancelHeaders: req.body?.cancelHeaders && typeof req.body.cancelHeaders === 'object' ? req.body.cancelHeaders : {},
       cancelBody: req.body?.cancelBody ?? null,
       cancelResult: null,
+      maintenanceAt: maintenanceAtDate.toISOString(),
+      maintenanceStatus: 'pending',
+      maintenanceSentAt: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -874,6 +927,8 @@ app.post('/companies/:companyId/schedule-confirmation', checkAuth, async (req, r
         number,
         startAt,
         status: entry.status,
+        maintenanceAt: entry.maintenanceAt,
+        maintenanceStatus: entry.maintenanceStatus,
       },
     });
   } catch (error) {

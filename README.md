@@ -69,6 +69,8 @@ Quando faltar o número de minutos definido em `CONFIRMATION_REMINDER_MINUTES` (
 - `1 - Vou comparecer`
 - `2 - Não vou comparecer (cancelar agendamento)`
 
+Após o atendimento, o microserviço também agenda automaticamente uma mensagem de manutenção para `+15 dias` (configurável por `MAINTENANCE_FOLLOWUP_DAYS`).
+
 Se o cliente responder `2`, o microserviço tenta cancelar automaticamente via HTTP usando:
 
 - `cancelUrl` do agendamento (se informado), ou
