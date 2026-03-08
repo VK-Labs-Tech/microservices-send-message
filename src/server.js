@@ -592,6 +592,20 @@ function validateCompanyId(companyId, res) {
   return false;
 }
 
+async function waitForSessionReady(session, timeoutMs = 15000) {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    if (session.ready && session.socket) {
+      return true;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  return Boolean(session.ready && session.socket);
+}
+
 async function sendTextByCompany(companyId, number, text) {
   const session = getOrCreateSession(companyId);
   if (!session) {
@@ -608,6 +622,10 @@ async function sendTextByCompany(companyId, number, text) {
     await initCompanySocket(companyId);
   }
 
+  if ((!session.ready || !session.socket) && session.connecting) {
+    await waitForSessionReady(session);
+  }
+
   if (!session.ready || !session.socket) {
     return {
       status: 503,
@@ -619,7 +637,8 @@ async function sendTextByCompany(companyId, number, text) {
     };
   }
 
-  const chatId = toWhatsAppJid(number);
+  const normalizedNumber = normalizePhone(number);
+  const chatId = toWhatsAppJid(normalizedNumber);
   if (!chatId) {
     return {
       status: 422,
@@ -630,17 +649,49 @@ async function sendTextByCompany(companyId, number, text) {
     };
   }
 
-  const result = await session.socket.sendMessage(chatId, { text });
+  let targetJid = chatId;
 
-  return {
-    status: 200,
-    body: {
-      ok: true,
-      id: result?.id?._serialized || null,
-      to: number,
-      companyId,
-    },
-  };
+  try {
+    if (typeof session.socket.onWhatsApp === 'function') {
+      const phoneCheck = await session.socket.onWhatsApp(chatId);
+      const firstMatch = Array.isArray(phoneCheck) ? phoneCheck[0] : null;
+
+      if (!firstMatch?.exists) {
+        return {
+          status: 422,
+          body: {
+            ok: false,
+            message: 'Número não encontrado no WhatsApp',
+          },
+        };
+      }
+
+      targetJid = firstMatch.jid || chatId;
+    }
+
+    const result = await session.socket.sendMessage(targetJid, { text });
+
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        id: result?.key?.id || result?.id?._serialized || null,
+        to: normalizedNumber,
+        companyId,
+      },
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    return {
+      status: 502,
+      body: {
+        ok: false,
+        message: 'Falha ao enviar mensagem para o WhatsApp',
+        error: errorMessage,
+      },
+    };
+  }
 }
 
 app.get('/health', (_req, res) => {
